@@ -8,7 +8,7 @@
 // arrays for mboxes and mbox messages
 
 static mbox mboxes[MBOX_NUM_MBOXES];
-static mbox_message message[MBOX_MAX_BUFFERS];
+static mbox_message message[MBOX_MAX_BUFFERS_PER_MBOX];
 
 
 //-------------------------------------------------------
@@ -25,6 +25,14 @@ static mbox_message message[MBOX_MAX_BUFFERS];
 //-------------------------------------------------------
 
 void MboxModuleInit() {
+  mbox_t i;
+  //initialize(reset) the inuse parameter
+  for(i = 0; i < MBOX_NUM_MBOXES; i++) {
+    mboxes[i].inuse = 0;
+  }
+  for(i = 0; i < MBOX_MAX_BUFFERS_PER_MBOX; i++) {
+    message[i].inuse = 0;
+  }
 }
 
 //-------------------------------------------------------
@@ -75,6 +83,16 @@ mbox_t MboxCreate() {
 //
 //-------------------------------------------------------
 int MboxOpen(mbox_t handle) {
+  if (lock_aquire(mboxes[handle].lock) == SYNC_FAIL) {
+    Print("Lock acquire fail");
+  }
+  mboxes[handle].inuse = 1;
+  //add current process
+
+  if (lock_release(mboxes[handle].lock) == SYNC_FAIL) {
+    Print("Lock release fail");
+  }
+
   return MBOX_FAIL;
 }
 
@@ -92,6 +110,8 @@ int MboxOpen(mbox_t handle) {
 //
 //-------------------------------------------------------
 int MboxClose(mbox_t handle) {
+
+  mboxes[handle].inuse = 0;   
   return MBOX_FAIL;
 }
 
