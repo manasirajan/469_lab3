@@ -7,7 +7,8 @@
 
 // arrays for mboxes and mbox messages
 
-
+static mbox mboxes[MBOX_NUM_MBOXES];
+static mbox_message message[MBOX_MAX_BUFFERS];
 
 
 //-------------------------------------------------------
@@ -37,6 +38,25 @@ void MboxModuleInit() {
 //
 //-------------------------------------------------------
 mbox_t MboxCreate() {
+  mbox_t i;
+  cond_t cond1;
+  cond_t cond2;
+  Lock* the_lock = lock_create();
+  int j;  
+  for(i = 0; i < MBOX_NUM_MBOXES; i++) {
+  	if(mboxes[i].inuse == 0) {
+	//find the earliest mbox not in use
+		mboxes[i].inuse = 1;
+		mboxes[i].cond1 = cond1;
+		mboxes[i].cond2 = cond2;
+		mboxes[i].lock = the_lock;
+		//initialize the array of process
+   		for(j = 0; j < PROCESS_MAX_PROCS; j++) {
+			mboxes[i].process[j] = 0;
+		}	
+		return i;
+	}
+  }
   return MBOX_FAIL;
 }
 
