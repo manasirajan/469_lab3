@@ -8,7 +8,7 @@
 // arrays for mboxes and mbox messages
 
 static mbox mboxes[MBOX_NUM_MBOXES];
-static mbox_message message[MBOX_MAX_BUFFERS_PER_MBOX];
+static mbox_message messages[MBOX_NUM_BUFFERS];
 
 
 //-------------------------------------------------------
@@ -31,7 +31,7 @@ void MboxModuleInit() {
     mboxes[i].inuse = 0;
   }
   for(i = 0; i < MBOX_MAX_BUFFERS_PER_MBOX; i++) {
-    message[i].inuse = 0;
+    messages[i].inuse = 0;
   }
 }
 
@@ -46,15 +46,36 @@ void MboxModuleInit() {
 //
 //-------------------------------------------------------
 mbox_t MboxCreate() {
+
   mbox_t i;
   cond_t cond1;
   cond_t cond2;
-  Lock* the_lock = lock_create();
-  int j;  
+  lock_t the_lock;
+  int j;
+  uint32 intrval;
+
+  if ((the_lock = LockCreate())== SYNC_FAIL){
+    return MBOX_FAIL;
+  };
+  if ((cond1= CondCreate(the_lock))== SYNC_FAIL){
+      return MBOX_FAIL;
+    };
+  if ((cond2= CondCreate(the_lock))== SYNC_FAIL){
+      return MBOX_FAIL;
+    };
+
+  intrval = DisableIntrs();
   for(i = 0; i < MBOX_NUM_MBOXES; i++) {
   	if(mboxes[i].inuse == 0) {
 	//find the earliest mbox not in use
 		mboxes[i].inuse = 1;
+    break;
+    }
+  }
+  RestoreIntrs(intrval);
+  if (i == MBOX_NUM_MBOXES){
+     return MBOX_FAIL;
+  }
 		mboxes[i].cond1 = cond1;
 		mboxes[i].cond2 = cond2;
 		mboxes[i].lock = the_lock;
@@ -63,10 +84,10 @@ mbox_t MboxCreate() {
 			mboxes[i].process[j] = 0;
 		}	
 		return i;
-	}
+	
   }
-  return MBOX_FAIL;
-}
+ 
+
 
 //-------------------------------------------------------
 //
@@ -84,16 +105,27 @@ mbox_t MboxCreate() {
 //-------------------------------------------------------
 int MboxOpen(mbox_t handle) {
   if (lock_aquire(mboxes[handle].lock) == SYNC_FAIL) {
-    Print("Lock acquire fail");
+    Print("Lock acquire fail\n");
+    return MBOX_FAIL;
   }
-  mboxes[handle].inuse = 1;
+  
   //add current process
+  if(mboxes[handle].inuse == 0) {
+    Print("mbox not in use\n");
+    return MBOX_FAIL;
+  }
+  if (mboxes[handle].process[GetCurrentPid()] == 1){
+    Print("Process already in mailbox\n"); 
+    return MBOX_FAIL;}
+
+  mboxes[handle].process[GetCurrentPid()] = 1;
 
   if (lock_release(mboxes[handle].lock) == SYNC_FAIL) {
-    Print("Lock release fail");
+    Print("Lock release fail\n");
+    return MBOX_FAIL;
   }
 
-  return MBOX_FAIL;
+  return MBOX_SUCCESS;
 }
 
 //-------------------------------------------------------
@@ -110,9 +142,32 @@ int MboxOpen(mbox_t handle) {
 //
 //-------------------------------------------------------
 int MboxClose(mbox_t handle) {
+  int j;
+  uint32 intrval;
 
-  mboxes[handle].inuse = 0;   
-  return MBOX_FAIL;
+  // do I need to disable interrupts
+  if (mboxes[handle].inuse !=1){
+    return MBOX_FAIL;
+  }
+
+  if(mboxes[handle].process[GetCurrentPid()] != 1){
+    return MBOX_FAIL;
+  }
+  
+  mboxes[handle].process[GetCurrentPid()] = 0;
+  for (j = 0; j<PROCESS_MAX_PROCS; j++){
+    if (mboxes[handle].process[j] != 0)
+    break;
+  }
+
+  intrval = DisableIntrs();
+
+if (j==PROCESS_MAX_PROCS){
+mboxes[handle].inuse = 0; 
+}
+ RestoreIntrs(intrval);
+    
+  return MBOX_SUCCESS;
 }
 
 //-------------------------------------------------------
@@ -132,6 +187,62 @@ int MboxClose(mbox_t handle) {
 //
 //-------------------------------------------------------
 int MboxSend(mbox_t handle, int length, void* message) {
+
+  uint32 intrval;
+  int i;
+
+  if (lock_aquire(mboxes[handle].lock) == SYNC_FAIL) {
+    Print("Lock acquire fail\n");
+    return MBOX_FAIL;
+  }
+
+  if (mboxes[handle].process[GetCurrentPid()]==0){
+    return MBOX_FAIL;
+  }
+  if (length > MBOX_MAX_MESSAGE_LENGTH || length < 0){
+    return MBOX_FAIL;
+  }
+
+  //check message mail box = 10 then go cond_wait
+  //check cond
+  //do we need to use MBOX_NUM_BUFFERS?
+  if(AQueueLength(&mboxes[handle].msg) >= MBOX_MAX_BUFFERS_PER_MBOX) {
+    if(CondWait(&mboxes[handle].cond1) == SYNC_FAIL) {
+      return MBOX_FAIL;
+    }
+  }
+
+  intrval = DisableIntrs(); 
+
+  //get free mbox message buffer
+  //store message to mbox message array
+  for(i = 0; i < MBOX_NUM_BUFFERS; i++) {
+    //find the earliest mbox message available
+    if(messages[i].inuse == 0) {
+      messages[i].inuse = 1;    //set the mbox_message buffer to be in use
+      memcpy(messages[i].message, message, length);
+      break;
+    }
+    else {
+      //no mbox_messages available
+      return MBOX_FAIL;
+    }
+  }
+
+  RestoreIntrs(intrval);
+
+  //insert message to queue
+  AQueueInsertLast(&mboxes[handle].msg, &messages[i].message);
+
+  if(CondWait(&mboxes[handle].cond2) == SYNC_FAIL) {
+    return MBOX_FAIL;
+  };
+
+  if (lock_release(mboxes[handle].lock) == SYNC_FAIL) {
+    Print("Lock release fail\n");
+    return MBOX_FAIL;
+  }
+
   return MBOX_FAIL;
 }
 
@@ -152,6 +263,16 @@ int MboxSend(mbox_t handle, int length, void* message) {
 //
 //-------------------------------------------------------
 int MboxRecv(mbox_t handle, int maxlength, void* message) {
+
+  if (lock_aquire(mboxes[handle].lock) == SYNC_FAIL) {
+    Print("Lock acquire fail\n");
+    return MBOX_FAIL;
+  }
+
+  if (mboxes[handle].process[GetCurrentPid()]==0){
+    return MBOX_FAIL;
+  }
+
   return MBOX_FAIL;
 }
 
@@ -168,5 +289,6 @@ int MboxRecv(mbox_t handle, int maxlength, void* message) {
 //
 //--------------------------------------------------------------------------------
 int MboxCloseAllByPid(int pid) {
+
   return MBOX_FAIL;
 }
