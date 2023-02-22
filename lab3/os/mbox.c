@@ -337,6 +337,6 @@ int MboxCloseAllByPid(int pid) {
 	         }
 		}
 	}
-
+RestoreIntrs(intrval);
   return MBOX_SUCCESS;
 }
