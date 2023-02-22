@@ -22,8 +22,8 @@ typedef struct mbox_message {
 typedef struct mbox {
     Queue msg;
     lock_t lock;
-    cond_t cond1;
-    cond_t cond2;
+    cond_t cond1;       //not empty
+    cond_t cond2;       //not full
     int inuse;
     int process[PROCESS_MAX_PROCS];
 } mbox;

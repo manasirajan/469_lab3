@@ -190,20 +190,20 @@ int MboxSend(mbox_t handle, int length, void* message) {
 
   uint32 intrval;
   int i;
-
+  //Acquire the lock;
   if (lock_aquire(mboxes[handle].lock) == SYNC_FAIL) {
     Print("Lock acquire fail\n");
     return MBOX_FAIL;
   }
-
+  //Check if process has the mailbox open
   if (mboxes[handle].process[GetCurrentPid()]==0){
     return MBOX_FAIL;
   }
+  //Check message length
   if (length > MBOX_MAX_MESSAGE_LENGTH || length < 0){
     return MBOX_FAIL;
   }
 
-  //check message mail box = 10 then go cond_wait
   //check cond
   //do we need to use MBOX_NUM_BUFFERS?
   if(AQueueLength(&mboxes[handle].msg) >= MBOX_MAX_BUFFERS_PER_MBOX) {
@@ -220,7 +220,7 @@ int MboxSend(mbox_t handle, int length, void* message) {
     //find the earliest mbox message available
     if(messages[i].inuse == 0) {
       messages[i].inuse = 1;    //set the mbox_message buffer to be in use
-      memcpy(messages[i].message, message, length);
+      bcopy(message, messages[i].message, length);
       break;
     }
     else {
@@ -231,13 +231,15 @@ int MboxSend(mbox_t handle, int length, void* message) {
 
   RestoreIntrs(intrval);
 
-  //insert message to queue
+  //insert message to queue - if we insert last here - retrieve first in receive
   AQueueInsertLast(&mboxes[handle].msg, &messages[i].message);
 
-  if(CondWait(&mboxes[handle].cond2) == SYNC_FAIL) {
+  //condSignal(notEmpty)
+  if(CondSignal(&mboxes[handle].cond2) == SYNC_FAIL) {
     return MBOX_FAIL;
   };
 
+  //release lock
   if (lock_release(mboxes[handle].lock) == SYNC_FAIL) {
     Print("Lock release fail\n");
     return MBOX_FAIL;
@@ -264,12 +266,39 @@ int MboxSend(mbox_t handle, int length, void* message) {
 //-------------------------------------------------------
 int MboxRecv(mbox_t handle, int maxlength, void* message) {
 
+  //acquire lock
   if (lock_aquire(mboxes[handle].lock) == SYNC_FAIL) {
     Print("Lock acquire fail\n");
     return MBOX_FAIL;
   }
-
+  //Check if process has the mailbox open
   if (mboxes[handle].process[GetCurrentPid()]==0){
+    return MBOX_FAIL;
+  }
+
+  //check input message length
+  if(maxlength > MBOX_MAX_MESSAGE_LENGTH || maxlength < 0) {
+    return MBOX_FAIL;
+  }
+
+  //check cond - if there is no message in the buffer?
+  if(AQueueLength(&mboxes[handle].msg) == 0) {
+    if(CondWait(&mboxes[handle].cond2) == SYNC_FAIL) {
+      return MBOX_FAIL;
+    }
+  }
+
+  //get the message from the queue  
+  //copy message
+
+  //condsignal(notFull)
+  if(CondSignal(&mboxes[handle].cond1) == SYNC_FAIL) {
+    return MBOX_FAIL;
+  };
+
+  //release lock
+  if (lock_release(mboxes[handle].lock) == SYNC_FAIL) {
+    Print("Lock release fail\n");
     return MBOX_FAIL;
   }
 
