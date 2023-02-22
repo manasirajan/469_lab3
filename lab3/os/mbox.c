@@ -318,6 +318,25 @@ int MboxRecv(mbox_t handle, int maxlength, void* message) {
 //
 //--------------------------------------------------------------------------------
 int MboxCloseAllByPid(int pid) {
+	uint32 intrval;
+	intrval = DisableIntrs();
+	for (int i = 0; i < MBOX_NUM_MBOXES; i++){ //checking each mailbox
+		if (mboxes[i].inuse == 0 && mboxes[i].process[pid] == 1){
+			RestoreIntrs(intrval);
+			return SYNC_FAIL;}
+		if (mboxes[i].inuse ==0){
+			continue;
+		}
+		mboxes[i].process[pid] = 0;
+		for (int j = 0; j < PROCESS_MAX_PROCS; j++){
+			if (mboxes[i].process[j] == 1){
+			break;
+			}
+		if (j==PROCESS_MAX_PROCS){
+			mboxes[i].inuse = 0;
+	         }
+		}
+	}
 
-  return MBOX_FAIL;
+  return MBOX_SUCCESS;
 }
